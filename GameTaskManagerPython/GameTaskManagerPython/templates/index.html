@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>タスク管理ツール</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+    <style>
+        body {
+            background-color: #f8f9fa;
+        }
+
+        .task-card {
+            margin-bottom: 1rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="container-fluid mt-4">
+        <h1 class="mb-4"><i class="bi bi-kanban"></i> タスクカンバンボード</h1>
+
+        <!-- 統一された高機能なタスク追加フォーム -->
+        <form action="{{ url_for('add_task', **request.args) }}" method="post" class="card shadow-sm mb-5">
+            <div class="card-header">
+                <h5 class="mb-0">新しいタスクを追加</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-5 mb-3">
+                        <label for="title" class="form-label">タイトル</label>
+                        <input type="text" id="title" name="title" class="form-control" required>
+                    </div>
+                    <div class="col-md-3 mb-3">
+                        <label for="category" class="form-label">担当職種</label>
+                        <select id="category" name="category" class="form-select">
+                            {% for category in task_categories %}
+                            <option value="{{ category }}">{{ category }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="col-md-2 mb-3">
+                        <label for="due_date" class="form-label">期日</label>
+                        <input type="date" id="due_date" name="due_date" class="form-control">
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label for="description" class="form-label">詳細（任意）</label>
+                    <textarea id="description" name="description" class="form-control" rows="2"></textarea>
+                </div>
+                <button type="submit" class="btn btn-primary">
+                    <i class="bi bi-plus-circle-fill"></i> タスクを追加
+                </button>
+            </div>
+        </form>
+
+        <div class="row">
+            <!-- ▼▼▼ プランナー列 ▼▼▼ -->
+            <div class="col-md-4">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h2><i class="bi bi-lightbulb"></i> プランナー</h2>
+                    <form method="get" style="max-width: 180px;">
+                        <input type="hidden" name="sort_designer" value="{{ sort_orders['デザイナー'] }}">
+                        <input type="hidden" name="sort_programmer" value="{{ sort_orders['プログラマー'] }}">
+                        <select name="sort_planner" class="form-select form-select-sm" onchange="this.form.submit()">
+                            <option value="upload_date_desc" {% if sort_orders['プランナー']=='upload_date_desc' %}selected{% endif %}>更新日 (新しい順)</option>
+                            <option value="upload_date_asc" {% if sort_orders['プランナー']=='upload_date_asc' %}selected{% endif %}>更新日 (古い順)</option>
+                            <option value="title_asc" {% if sort_orders['プランナー']=='title_asc' %}selected{% endif %}>タイトル (昇順)</option>
+                        </select>
+                    </form>
+                </div>
+                {% for task in tasks['プランナー'] %}
+                <div class="card task-card shadow-sm">
+                    <div class="card-body">
+                        <h5 class="card-title">{{ task.title }}</h5>
+
+                        {% if task.description %}
+                        <p class="card-text">{{ task.description }}</p>
+                        {% endif %}
+
+                        <p class="card-text">
+                            <small class="text-muted">
+                                最終更新: {{ task.latest_upload_date.strftime('%Y-%m-%d %H:%M') if task.latest_upload_date else 'ファイル未添付' }}
+                            </small>
+                        </p>
+                        <form action="{{ url_for('upload_file', task_id=task.id, **request.args) }}" method="post" enctype="multipart/form-data" class="mb-2">
+                            <div class="input-group input-group-sm">
+                                <input type="file" name="file" class="form-control" required>
+                                <button type="submit" class="btn btn-outline-secondary"><i class="bi bi-upload"></i></button>
+                            </div>
+                        </form>
+                        {% if task.files %}
+                        <div class="mb-2">
+                            {% for file in task.files %}
+                            <a href="{{ url_for('uploaded_file', filename=file.filename) }}" target="_blank" class="btn btn-sm btn-outline-dark mb-1">
+                                <i class="bi bi-file-earmark-arrow-down"></i> {{ file.filename | truncate(25) }}
+                            </a>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                        <hr>
+                        <form action="{{ url_for('delete_task', task_id=task.id, **request.args) }}" method="post" onsubmit="return confirm('本当に削除しますか？');" class="d-inline float-end">
+                            <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                        </form>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+
+            <!-- ▼▼▼ デザイナー列 ▼▼▼ -->
+            <div class="col-md-4">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h2><i class="bi bi-palette"></i> デザイナー</h2>
+                    <form method="get" style="max-width: 180px;">
+                        <input type="hidden" name="sort_planner" value="{{ sort_orders['プランナー'] }}">
+                        <input type="hidden" name="sort_programmer" value="{{ sort_orders['プログラマー'] }}">
+                        <select name="sort_designer" class="form-select form-select-sm" onchange="this.form.submit()">
+                            <option value="created_at_desc" {% if sort_orders['デザイナー']=='created_at_desc' %}selected{% endif %}>作成日 (新しい順)</option>
+                            <option value="created_at_asc" {% if sort_orders['デザイナー']=='created_at_asc' %}selected{% endif %}>作成日 (古い順)</option>
+                            <option value="title_asc" {% if sort_orders['デザイナー']=='title_asc' %}selected{% endif %}>タイトル (昇順)</option>
+                        </select>
+                    </form>
+                </div>
+                {% for task in tasks['デザイナー'] %}
+                <div class="card task-card shadow-sm">
+                    <div class="card-body">
+                        <h5 class="card-title">{{ task.title }}</h5>
+
+                        {% if task.description %}
+                        <p class="card-text">{{ task.description }}</p>
+                        {% endif %}
+
+                        <p class="card-text"><small class="text-muted">期日: {{ task.due_date.strftime('%Y-%m-%d') if task.due_date else '未設定' }}</small></p>
+                        <form action="{{ url_for('upload_file', task_id=task.id, **request.args) }}" method="post" enctype="multipart/form-data" class="mb-2">
+                            <div class="input-group input-group-sm">
+                                <input type="file" name="file" class="form-control" required>
+                                <button type="submit" class="btn btn-outline-secondary"><i class="bi bi-upload"></i></button>
+                            </div>
+                        </form>
+                        {% if task.files %}
+                        <div class="mb-2">
+                            {% for file in task.files %}
+                            {% if is_video_file(file.filename) %}
+                            <video width="150" controls preload="metadata" class="img-thumbnail">
+                                <source src="{{ url_for('uploaded_file', filename=file.filename) }}" type="video/mp4">
+                            </video>
+                            {% else %}
+                            <a href="{{ url_for('uploaded_file', filename=file.filename) }}" target="_blank">
+                                <img src="{{ url_for('uploaded_file', filename=file.filename) }}" class="img-thumbnail" width="60" alt="{{ file.filename }}">
+                            </a>
+                            {% endif %}
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                        <hr>
+                        <form action="{{ url_for('delete_task', task_id=task.id, **request.args) }}" method="post" onsubmit="return confirm('本当に削除しますか？');" class="d-inline float-end">
+                            <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                        </form>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+
+            <!-- ▼▼▼ プログラマー列 ▼▼▼ -->
+            <div class="col-md-4">
+                <div class="d-flex justify-content-between align-items-center mb-2">
+                    <h2><i class="bi bi-code-slash"></i> プログラマー</h2>
+                    <form method="get" style="max-width: 180px;">
+                        <input type="hidden" name="sort_planner" value="{{ sort_orders['プランナー'] }}">
+                        <input type="hidden" name="sort_designer" value="{{ sort_orders['デザイナー'] }}">
+                        <select name="sort_programmer" class="form-select form-select-sm" onchange="this.form.submit()">
+                            <option value="due_date_asc" {% if sort_orders['プログラマー']=='due_date_asc' %}selected{% endif %}>期日 (近い順)</option>
+                            <option value="due_date_desc" {% if sort_orders['プログラマー']=='due_date_desc' %}selected{% endif %}>期日 (遠い順)</option>
+                            <option value="status_asc" {% if sort_orders['プログラマー']=='status_asc' %}selected{% endif %}>進行度</option>
+                        </select>
+                    </form>
+                </div>
+                {% for task in tasks['プログラマー'] %}
+                <div class="card task-card shadow-sm">
+                    <div class="card-body">
+                        <h5 class="card-title">{{ task.title }}</h5>
+
+                        {% if task.description %}
+                        <p class="card-text">{{ task.description }}</p>
+                        {% endif %}
+
+                        <p class="card-text"><small class="text-muted">期日: {{ task.due_date.strftime('%Y-%m-%d') if task.due_date else '未設定' }}</small></p>
+                        <form action="{{ url_for('update_status', task_id=task.id, **request.args) }}" method="post" class="d-inline-block w-100 mb-2">
+                            <div class="input-group input-group-sm">
+                                <label class="input-group-text">進行度</label>
+                                <select name="status" class="form-select" onchange="this.form.submit()">
+                                    {% for status in task_statuses %}
+                                    <option value="{{ status }}" {% if task.status==status %}selected{% endif %}>{{ status }}</option>
+                                    {% endfor %}
+                                </select>
+                            </div>
+                        </form>
+                        <form action="{{ url_for('upload_file', task_id=task.id, **request.args) }}" method="post" enctype="multipart/form-data" class="mb-2">
+                            <div class="input-group input-group-sm">
+                                <input type="file" name="file" class="form-control" required>
+                                <button type="submit" class="btn btn-outline-secondary"><i class="bi bi-upload"></i></button>
+                            </div>
+                        </form>
+                        {% if task.files %}
+                        <div class="mb-2">
+                            {% for file in task.files %}
+                            {% if is_video_file(file.filename) %}
+                            <video width="150" controls preload="metadata" class="img-thumbnail">
+                                <source src="{{ url_for('uploaded_file', filename=file.filename) }}" type="video/mp4">
+                            </video>
+                            {% else %}
+                            <a href="{{ url_for('uploaded_file', filename=file.filename) }}" target="_blank" class="btn btn-sm btn-outline-dark mb-1">
+                                <i class="bi bi-file-earmark-arrow-down"></i> {{ file.filename | truncate(25) }}
+                            </a>
+                            {% endif %}
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                        <hr>
+                        <form action="{{ url_for('delete_task', task_id=task.id, **request.args) }}" method="post" onsubmit="return confirm('本当に削除しますか？');" class="d-inline float-end">
+                            <button type="submit" class="btn btn-sm btn-outline-danger"><i class="bi bi-trash"></i></button>
+                        </form>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</body>
+</html>
