@@ -9,7 +9,7 @@ from sqlalchemy import desc, asc
 load_dotenv()
 app = Flask(__name__)
 
-# --- 設定 (変更なし) ---
+# --- 設定 ---
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS_PLANNER = {'pdf', 'txt', 'doc', 'docx'}
 ALLOWED_EXTENSIONS_DESIGNER = {'png', 'jpg', 'jpeg', 'gif'}
@@ -24,13 +24,18 @@ app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
-# --- 選択肢の定義 (変更なし) ---
+# --- 選択肢の定義 ---
 TASK_STATUSES = ['ToDo', 'InProgress', 'Review', 'Done']
 TASK_CATEGORIES = ['プランナー', 'デザイナー', 'プログラマー']
 
-# --- モデル定義 (変更なし) ---
+# --- モデル定義 ---
+class Assignee(db.Model):
+    __tablename__ = 'assignees'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(100), unique=True, nullable=False)
+    def __repr__(self): return f'<Assignee {self.name}>'
+
 class TaskItem(db.Model):
-    # ... (このクラスの中身は変更ありません)
     __tablename__ = 'tasks'
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(200), nullable=False)
@@ -39,19 +44,19 @@ class TaskItem(db.Model):
     created_at = db.Column(db.DateTime, nullable=False, default=db.func.now())
     due_date = db.Column(db.Date, nullable=True)
     category = db.Column(db.String(50), nullable=False, default='プログラマー')
+    assignee_id = db.Column(db.Integer, db.ForeignKey('assignees.id'), nullable=True)
+    assignee = db.relationship('Assignee', backref='tasks')
     files = db.relationship('UploadedFile', backref='task', lazy=True, cascade="all, delete-orphan")
 
 class UploadedFile(db.Model):
-    # ... (このクラスの中身は変更ありません)
     __tablename__ = 'uploaded_files'
     id = db.Column(db.Integer, primary_key=True)
     filename = db.Column(db.String(255), nullable=False)
     task_id = db.Column(db.Integer, db.ForeignKey('tasks.id'), nullable=False)
     uploaded_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
-# --- ヘルパー関数 (変更なし) ---
+# --- ヘルパー関数 ---
 def allowed_file(filename, category):
-    # ... (この関数の中身は変更ありません)
     allowed_extensions = set()
     if category == 'プランナー': allowed_extensions = ALLOWED_EXTENSIONS_PLANNER
     elif category == 'デザイナー': allowed_extensions = ALLOWED_EXTENSIONS_DESIGNER
@@ -65,28 +70,19 @@ def is_video_file(filename):
 def utility_processor():
     return dict(is_video_file=is_video_file)
 
-
-# --- ▼▼▼ ここからロジックを大幅に変更 ▼▼▼ ---
-
+# --- ルート（URL）とビュー関数 ---
 @app.route('/')
 def home():
-    """選択されたカテゴリのタスクとソート順で一覧表示します。"""
-    
-    # URLから'category'パラメータを取得。なければ'プランナー'をデフォルトにする
     active_category = request.args.get('category', 'プランナー')
-    # URLから'sort'パラメータを取得
     sort_key = request.args.get('sort')
 
-    # デフォルトのソート順をカテゴリごとに設定
     if not sort_key:
         if active_category == 'プランナー': sort_key = 'upload_date_desc'
         elif active_category == 'デザイナー': sort_key = 'created_at_desc'
         else: sort_key = 'due_date_asc'
 
-    # 選択されたカテゴリのタスクのみをクエリ
     query = TaskItem.query.filter_by(category=active_category)
 
-    # ソート処理
     if active_category == 'プランナー':
         query = query.join(TaskItem.files, isouter=True).group_by(TaskItem.id)
         if sort_key == 'upload_date_desc': query = query.order_by(desc(db.func.max(UploadedFile.uploaded_at)))
@@ -103,71 +99,113 @@ def home():
     
     tasks = query.all()
 
-    # プランナーの場合、最新アップロード日を計算してタスクに追加
     if active_category == 'プランナー':
         for task in tasks:
             latest_file = UploadedFile.query.filter_by(task_id=task.id).order_by(desc(UploadedFile.uploaded_at)).first()
             task.latest_upload_date = latest_file.uploaded_at if latest_file else None
+    
+    assignees = Assignee.query.order_by(Assignee.name).all()
 
     return render_template('index.html', 
                            tasks=tasks, 
                            task_statuses=TASK_STATUSES, 
                            task_categories=TASK_CATEGORIES, 
+                           assignees=assignees,
                            active_category=active_category,
                            sort_key=sort_key)
 
-# redirect先を修正して、操作後も同じタブが表示されるようにする
 @app.route('/add', methods=['POST'])
 def add_task():
-    # ... (この関数の中身は変更ありません)
-    title = request.form.get('title'); description = request.form.get('description'); category = request.form.get('category'); due_date_str = request.form.get('due_date')
+    title = request.form.get('title')
+    description = request.form.get('description')
+    category = request.form.get('category')
+    due_date_str = request.form.get('due_date')
+    
+    assignee_id = request.form.get('assignee_id')
+    new_assignee_name = request.form.get('new_assignee_name', '').strip()
+    
+    final_assignee_id = None
+
     if title and category in TASK_CATEGORIES:
+        if assignee_id and assignee_id != 'new':
+            final_assignee_id = int(assignee_id)
+        elif new_assignee_name:
+            existing_assignee = Assignee.query.filter_by(name=new_assignee_name).first()
+            if existing_assignee:
+                final_assignee_id = existing_assignee.id
+            else:
+                new_assignee = Assignee(name=new_assignee_name)
+                db.session.add(new_assignee)
+                db.session.commit()
+                final_assignee_id = new_assignee.id
+
         due_date = datetime.strptime(due_date_str, '%Y-%m-%d').date() if due_date_str else None
-        new_task = TaskItem(title=title, description=description, category=category, due_date=due_date)
-        db.session.add(new_task); db.session.commit()
-    return redirect(url_for('home', category=category)) # 追加したタスクのカテゴリタブにリダイレクト
+        new_task = TaskItem(title=title, description=description, category=category, 
+                            due_date=due_date, assignee_id=final_assignee_id)
+        
+        db.session.add(new_task)
+        db.session.commit()
+    
+    # ▼▼▼ ここが修正されたリダイレクト部分です ▼▼▼
+    args = request.args.copy()
+    args.pop('category', None) # 重複を避けるためにcategoryを削除
+    return redirect(url_for('home', category=category, **args))
 
 @app.route('/upload/<int:task_id>', methods=['POST'])
 def upload_file(task_id):
-    # ... (この関数の中身は変更ありません)
     task = TaskItem.query.get_or_404(task_id)
-    if 'file' not in request.files: flash('ファイルが選択されていません'); return redirect(url_for('home', **request.args))
+    if 'file' not in request.files:
+        flash('ファイルが選択されていません')
+        return redirect(url_for('home', **request.args))
+    
     file = request.files['file']
-    if file.filename == '': flash('ファイル名がありません'); return redirect(url_for('home', **request.args))
+    if file.filename == '':
+        flash('ファイル名がありません')
+        return redirect(url_for('home', **request.args))
+
     if file and allowed_file(file.filename, task.category):
-        filename = secure_filename(file.filename); unique_filename = f"{int(datetime.now().timestamp())}_{filename}"
+        filename = secure_filename(file.filename)
+        unique_filename = f"{int(datetime.now().timestamp())}_{filename}"
         file.save(os.path.join(app.config['UPLOAD_FOLDER'], unique_filename))
-        new_file = UploadedFile(filename=unique_filename, task_id=task.id); db.session.add(new_file); db.session.commit()
-    else: flash('許可されていないファイル形式です')
+        
+        new_file = UploadedFile(filename=unique_filename, task_id=task.id)
+        db.session.add(new_file)
+        db.session.commit()
+    else:
+        flash('許可されていないファイル形式です')
     return redirect(url_for('home', **request.args))
 
-@app.route('/delete/<int:task_id>', methods=['POST'])
-def delete_task(task_id):
-    # ... (この関数の中身は変更ありません)
-    task = TaskItem.query.get_or_404(task_id)
-    for file in task.files:
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
-        if os.path.exists(filepath): os.remove(filepath)
-    db.session.delete(task); db.session.commit()
-    return redirect(url_for('home', **request.args))
-
-@app.route('/update/status/<int:task_id>', methods=['POST'])
-def update_status(task_id):
-    # ... (この関数の中身は変更ありません)
-    task = TaskItem.query.get_or_404(task_id)
-    new_status = request.form.get('status')
-    if new_status in TASK_STATUSES: task.status = new_status; db.session.commit()
-    return redirect(url_for('home', **request.args))
-
-# (uploaded_file, db-init, 実行ブロックは変更なし)
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
+@app.route('/delete/<int:task_id>', methods=['POST'])
+def delete_task(task_id):
+    task = TaskItem.query.get_or_404(task_id)
+    for file in task.files:
+        filepath = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
+        if os.path.exists(filepath):
+            os.remove(filepath)
+    db.session.delete(task)
+    db.session.commit()
+    return redirect(url_for('home', **request.args))
+
+@app.route('/update/status/<int:task_id>', methods=['POST'])
+def update_status(task_id):
+    task = TaskItem.query.get_or_404(task_id)
+    new_status = request.form.get('status')
+    if new_status in TASK_STATUSES:
+        task.status = new_status
+        db.session.commit()
+    return redirect(url_for('home', **request.args))
+
+# --- カスタムコマンド ---
 @app.cli.command('db-init')
 def db_init():
-    with app.app_context(): db.create_all()
+    with app.app_context():
+        db.create_all()
     print("データベースの初期化が完了しました。")
 
+# --- 実行ブロック ---
 if __name__ == '__main__':
     app.run(debug=True)

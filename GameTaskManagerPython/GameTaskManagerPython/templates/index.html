@@ -9,31 +9,31 @@
     <style>
         body {
             background-color: #f8f9fa;
-            font-size: 1.5rem;
+            font-size: 1.1rem;
         }
 
         .task-card {
-            margin-bottom: 1.2rem;
+            margin-bottom: 1rem;
         }
 
         h1 {
-            font-size: 3rem;
-        }
-
-        h2 {
             font-size: 2.5rem;
         }
 
-        h3 {
-            font-size: 2rem;
+        h2 {
+            font-size: 1.75rem;
         }
 
-        .card-title {
+        h3 {
             font-size: 1.5rem;
         }
 
-        .card-text {
+        .card-title {
             font-size: 1.25rem;
+        }
+
+        .card-text {
+            font-size: 1rem;
         }
 
         .form-label {
@@ -41,19 +41,19 @@
         }
 
         .form-control, .form-select, .btn {
-            font-size: 1.25rem;
-            padding: 1rem 1.25rem;
+            font-size: 1rem;
+            padding: 0.5rem 1rem;
         }
 
         .btn-sm, .form-select-sm, .input-group-sm > .form-control {
-            font-size: 1.2rem;
-            padding: 0.6rem 0.9rem;
+            font-size: 0.9rem;
+            padding: 0.3rem 0.6rem;
         }
     </style>
 </head>
 <body>
-    <div class="container mt-4">
-        <h1 class="mb-4"><i class="bi bi-folder2-open"></i> タスク管理</h1>
+    <div class="container-fluid mt-4">
+        <h1 class="mb-4"><i class="bi bi-kanban"></i> タスク管理ツール</h1>
 
         <ul class="nav nav-tabs mb-4">
             {% for category in task_categories %}
@@ -69,19 +69,13 @@
             {% endfor %}
         </ul>
 
-        <form action="{{ url_for('add_task', category=active_category) }}" method="post" class="card shadow-sm mb-5">
+        <form action="{{ url_for('add_task', **request.args) }}" method="post" class="card shadow-sm mb-5">
             <div class="card-header"><h5 class="mb-0">新しいタスクを追加</h5></div>
             <div class="card-body">
                 <div class="row">
-                    <div class="col-md-5 mb-3"><label for="title" class="form-label">タイトル</label><input type="text" id="title" name="title" class="form-control" required></div>
-                    <div class="col-md-3 mb-3">
-                        <label for="category" class="form-label">担当職種</label>
-                        <select id="category" name="category" class="form-select">
-                            {% for category in task_categories %}
-                            <option value="{{ category }}" {% if category==active_category %}selected{% endif %}>{{ category }}</option>
-                            {% endfor %}
-                        </select>
-                    </div>
+                    <div class="col-md-4 mb-3"><label for="title" class="form-label">タイトル</label><input type="text" id="title" name="title" class="form-control" required></div>
+                    <div class="col-md-3 mb-3"><label for="category" class="form-label">担当職種</label><select id="category" name="category" class="form-select">{% for category in task_categories %}<option value="{{ category }}" {% if category==active_category %}selected{% endif %}>{{ category }}</option>{% endfor %}</select></div>
+                    <div class="col-md-3 mb-3"><label for="assignee_id" class="form-label">担当者</label><select id="assignee_id" name="assignee_id" class="form-select"><option value="">-- 選択 --</option>{% for assignee in assignees %}<option value="{{ assignee.id }}">{{ assignee.name }}</option>{% endfor %}<option value="new">-- 新規担当者を追加 --</option></select><input type="text" name="new_assignee_name" id="new_assignee_field" class="form-control mt-2" style="display: none;" placeholder="新しい担当者名を入力"></div>
                     <div class="col-md-2 mb-3"><label for="due_date" class="form-label">期日</label><input type="date" id="due_date" name="due_date" class="form-control"></div>
                 </div>
                 <div class="mb-3"><label for="description" class="form-label">詳細（任意）</label><textarea id="description" name="description" class="form-control" rows="2"></textarea></div>
@@ -92,25 +86,21 @@
         <div class="d-flex justify-content-between align-items-center mb-2">
             <h3>タスク一覧</h3>
             <form method="get" style="max-width: 250px;">
-                <!-- 幅を少し広げました -->
                 <input type="hidden" name="category" value="{{ active_category }}">
                 {% if active_category == 'プランナー' %}
                 <select name="sort" class="form-select" onchange="this.form.submit()">
-                    <!-- `-sm`を削除 -->
                     <option value="upload_date_desc" {% if sort_key=='upload_date_desc' %}selected{% endif %}>更新日 (新しい順)</option>
                     <option value="upload_date_asc" {% if sort_key=='upload_date_asc' %}selected{% endif %}>更新日 (古い順)</option>
                     <option value="title_asc" {% if sort_key=='title_asc' %}selected{% endif %}>タイトル (昇順)</option>
                 </select>
                 {% elif active_category == 'デザイナー' %}
                 <select name="sort" class="form-select" onchange="this.form.submit()">
-                    <!-- `-sm`を削除 -->
                     <option value="created_at_desc" {% if sort_key=='created_at_desc' %}selected{% endif %}>作成日 (新しい順)</option>
                     <option value="created_at_asc" {% if sort_key=='created_at_asc' %}selected{% endif %}>作成日 (古い順)</option>
                     <option value="title_asc" {% if sort_key=='title_asc' %}selected{% endif %}>タイトル (昇順)</option>
                 </select>
                 {% else %}
                 <select name="sort" class="form-select" onchange="this.form.submit()">
-                    <!-- `-sm`を削除 -->
                     <option value="due_date_asc" {% if sort_key=='due_date_asc' %}selected{% endif %}>期日 (近い順)</option>
                     <option value="due_date_desc" {% if sort_key=='due_date_desc' %}selected{% endif %}>期日 (遠い順)</option>
                     <option value="status_asc" {% if sort_key=='status_asc' %}selected{% endif %}>進行度</option>
@@ -125,7 +115,9 @@
                 <div class="card task-card shadow-sm">
                     <div class="card-body">
                         <h5 class="card-title">{{ task.title }}</h5>
+                        <p class="card-text"><i class="bi bi-person-fill"></i> 担当: <strong>{{ task.assignee.name if task.assignee else '未割り当て' }}</strong></p>
                         {% if task.description %}<p class="card-text">{{ task.description }}</p>{% endif %}
+
                         {% if task.category == 'プランナー' %}
                         <p class="card-text"><small class="text-muted">最終更新: {{ task.latest_upload_date.strftime('%Y-%m-%d %H:%M') if task.latest_upload_date else 'ファイル未添付' }}</small></p>
                         {% else %}
@@ -134,30 +126,33 @@
 
                         {% if task.category != 'プランナー' %}
                         <form action="{{ url_for('update_status', task_id=task.id, **request.args) }}" method="post" class="d-inline-block w-100 mb-2">
-                            <div class="input-group"><label class="input-group-text">進行度</label><select name="status" class="form-select" onchange="this.form.submit()">{% for status in task_statuses %}<option value="{{ status }}" {% if task.status==status %}selected{% endif %}>{{ status }}</option>{% endfor %}</select></div> <!-- `-sm`を削除 -->
+                            <div class="input-group"><label class="input-group-text">進行度</label><select name="status" class="form-select" onchange="this.form.submit()">{% for status in task_statuses %}<option value="{{ status }}" {% if task.status==status %}selected{% endif %}>{{ status }}</option>{% endfor %}</select></div>
                         </form>
                         {% endif %}
 
-                        {% if task.category != 'プログラマー' %}
-                        <form action="{{ url_for('upload_file', task_id=task.id, **request.args) }}" method="post" enctype="multipart/form-data" class="mb-2"><div class="input-group"><input type="file" name="file" class="form-control" required><button type="submit" class="btn btn-outline-secondary"><i class="bi bi-upload"></i></button></div></form> <!-- `-sm`を削除 -->
-                        {% endif %}
+                        <form action="{{ url_for('upload_file', task_id=task.id, **request.args) }}" method="post" enctype="multipart/form-data" class="mb-2">
+                            <div class="input-group">
+                                <input type="file" name="file" class="form-control" required>
+                                <button type="submit" class="btn btn-outline-secondary"><i class="bi bi-upload"></i></button>
+                            </div>
+                        </form>
 
                         {% if task.files %}
                         <div class="mb-2">
                             {% for file in task.files %}
                             {% if is_video_file(file.filename) %}
-                            <video width="200" controls preload="metadata" class="img-thumbnail"><source src="{{ url_for('uploaded_file', filename=file.filename) }}" type="video/mp4"></video> <!-- サイズを少し大きくしました -->
+                            <video width="200" controls preload="metadata" class="img-thumbnail"><source src="{{ url_for('uploaded_file', filename=file.filename) }}" type="video/mp4"></video>
                             {% elif task.category == 'デザイナー' %}
-                            <a href="{{ url_for('uploaded_file', filename=file.filename) }}" target="_blank"><img src="{{ url_for('uploaded_file', filename=file.filename) }}" class="img-thumbnail" width="100" alt="{{ file.filename }}"></a> <!-- サイズを少し大きくしました -->
+                            <a href="{{ url_for('uploaded_file', filename=file.filename) }}" target="_blank"><img src="{{ url_for('uploaded_file', filename=file.filename) }}" class="img-thumbnail" width="100" alt="{{ file.filename }}"></a>
                             {% else %}
-                            <a href="{{ url_for('uploaded_file', filename=file.filename) }}" target="_blank" class="btn btn-outline-dark mb-1"><i class="bi bi-file-earmark-arrow-down"></i> {{ file.filename | truncate(25) }}</a> <!-- btn-smを削除 -->
+                            <a href="{{ url_for('uploaded_file', filename=file.filename) }}" target="_blank" class="btn btn-outline-dark mb-1"><i class="bi bi-file-earmark-arrow-down"></i> {{ file.filename | truncate(25) }}</a>
                             {% endif %}
                             {% endfor %}
                         </div>
                         {% endif %}
 
                         <hr>
-                        <form action="{{ url_for('delete_task', task_id=task.id, **request.args) }}" method="post" onsubmit="return confirm('本当に削除しますか？');" class="d-inline float-end"><button type="submit" class="btn btn-danger"><i class="bi bi-trash"></i></button></form> <!-- btn-smを削除、見やすくするために色をつけました -->
+                        <form action="{{ url_for('delete_task', task_id=task.id, **request.args) }}" method="post" onsubmit="return confirm('本当に削除しますか？');" class="d-inline float-end"><button type="submit" class="btn btn-danger"><i class="bi bi-trash"></i></button></form>
                     </div>
                 </div>
                 {% else %}
@@ -166,5 +161,17 @@
             </div>
         </div>
     </div>
+
+    <script>
+        document.getElementById('assignee_id').addEventListener('change', function () {
+            var newAssigneeField = document.getElementById('new_assignee_field');
+            if (this.value === 'new') {
+                newAssigneeField.style.display = 'block';
+                newAssigneeField.focus();
+            } else {
+                newAssigneeField.style.display = 'none';
+            }
+        });
+    </script>
 </body>
 </html>
