@@ -7,57 +7,30 @@ from werkzeug.utils import secure_filename
 from sqlalchemy import desc, asc
 
 load_dotenv()
-
 app = Flask(__name__)
 
-# --- アップロード設定 ---
+# --- 設定 (変更なし) ---
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS_PLANNER = {'pdf', 'txt', 'doc', 'docx'}
 ALLOWED_EXTENSIONS_DESIGNER = {'png', 'jpg', 'jpeg', 'gif'}
 ALLOWED_EXTENSIONS_VIDEO = {'mp4', 'webm', 'mov'} 
 ALLOWED_EXTENSIONS_DESIGNER.update(ALLOWED_EXTENSIONS_VIDEO)
-ALLOWED_EXTENSIONS_PROGRAMMER = ALLOWED_EXTENSIONS_VIDEO.copy() # 動画のみを許可
-
+ALLOWED_EXTENSIONS_PROGRAMMER = ALLOWED_EXTENSIONS_VIDEO.copy()
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['SECRET_KEY'] = 'your_secret_key'
-
-def allowed_file(filename, category):
-    """ファイル名が、担当職種で許可された拡張子かチェックする関数"""
-    allowed_extensions = set()
-    if category == 'プランナー':
-        allowed_extensions = ALLOWED_EXTENSIONS_PLANNER
-    elif category == 'デザイナー':
-        allowed_extensions = ALLOWED_EXTENSIONS_DESIGNER
-    elif category == 'プログラマー':
-        allowed_extensions = ALLOWED_EXTENSIONS_PROGRAMMER
-    
-    return '.' in filename and \
-           filename.rsplit('.', 1)[1].lower() in allowed_extensions
-
-def is_video_file(filename):
-    """ファイル名が動画形式かどうかを判定します。"""
-    return '.' in filename and \
-           filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS_VIDEO
-
-# この関数をHTMLテンプレート内で使えるように登録
-@app.context_processor
-def utility_processor():
-    return dict(is_video_file=is_video_file)
-
-# --- データベース設定 ---
 db_url = os.environ.get('DATABASE_URL')
-if not db_url:
-    raise ValueError("DATABASE_URLが.envファイルに設定されていません。")
+if not db_url: raise ValueError("DATABASE_URLが.envファイルに設定されていません。")
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
-# --- 選択肢の定義 ---
+# --- 選択肢の定義 (変更なし) ---
 TASK_STATUSES = ['ToDo', 'InProgress', 'Review', 'Done']
 TASK_CATEGORIES = ['プランナー', 'デザイナー', 'プログラマー']
 
-# --- モデル定義 ---
+# --- モデル定義 (変更なし) ---
 class TaskItem(db.Model):
+    # ... (このクラスの中身は変更ありません)
     __tablename__ = 'tasks'
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(200), nullable=False)
@@ -69,128 +42,132 @@ class TaskItem(db.Model):
     files = db.relationship('UploadedFile', backref='task', lazy=True, cascade="all, delete-orphan")
 
 class UploadedFile(db.Model):
+    # ... (このクラスの中身は変更ありません)
     __tablename__ = 'uploaded_files'
     id = db.Column(db.Integer, primary_key=True)
     filename = db.Column(db.String(255), nullable=False)
     task_id = db.Column(db.Integer, db.ForeignKey('tasks.id'), nullable=False)
     uploaded_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
-# --- ルート（URL）とビュー関数 ---
+# --- ヘルパー関数 (変更なし) ---
+def allowed_file(filename, category):
+    # ... (この関数の中身は変更ありません)
+    allowed_extensions = set()
+    if category == 'プランナー': allowed_extensions = ALLOWED_EXTENSIONS_PLANNER
+    elif category == 'デザイナー': allowed_extensions = ALLOWED_EXTENSIONS_DESIGNER
+    elif category == 'プログラマー': allowed_extensions = ALLOWED_EXTENSIONS_PROGRAMMER
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in allowed_extensions
+
+def is_video_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS_VIDEO
+
+@app.context_processor
+def utility_processor():
+    return dict(is_video_file=is_video_file)
+
+
+# --- ▼▼▼ ここからロジックを大幅に変更 ▼▼▼ ---
+
 @app.route('/')
 def home():
-    sort_orders = {
-        'プランナー': request.args.get('sort_planner', 'upload_date_desc'),
-        'デザイナー': request.args.get('sort_designer', 'created_at_desc'),
-        'プログラマー': request.args.get('sort_programmer', 'due_date_asc'),
-    }
-
-    tasks_by_category = {category: [] for category in TASK_CATEGORIES}
+    """選択されたカテゴリのタスクとソート順で一覧表示します。"""
     
-    for category in TASK_CATEGORIES:
-        query = TaskItem.query.filter_by(category=category)
-        sort_key = sort_orders[category]
+    # URLから'category'パラメータを取得。なければ'プランナー'をデフォルトにする
+    active_category = request.args.get('category', 'プランナー')
+    # URLから'sort'パラメータを取得
+    sort_key = request.args.get('sort')
 
-        if category == 'プランナー':
-            query = query.join(TaskItem.files, isouter=True).group_by(TaskItem.id)
-            if sort_key == 'upload_date_desc':
-                query = query.order_by(desc(db.func.max(UploadedFile.uploaded_at)))
-            elif sort_key == 'upload_date_asc':
-                query = query.order_by(asc(db.func.max(UploadedFile.uploaded_at)))
-            elif sort_key == 'title_asc':
-                query = query.order_by(asc(TaskItem.title))
-        elif category == 'デザイナー':
-            if sort_key == 'created_at_desc':
-                query = query.order_by(desc(TaskItem.created_at))
-            elif sort_key == 'created_at_asc':
-                query = query.order_by(asc(TaskItem.created_at))
-            elif sort_key == 'title_asc':
-                query = query.order_by(asc(TaskItem.title))
-        elif category == 'プログラマー':
-            if sort_key == 'due_date_asc':
-                query = query.order_by(TaskItem.due_date.asc().nulls_last())
-            elif sort_key == 'due_date_desc':
-                query = query.order_by(TaskItem.due_date.desc().nulls_first())
-            elif sort_key == 'status_asc':
-                query = query.order_by(asc(TaskItem.status))
-        
-        tasks_by_category[category] = query.all()
+    # デフォルトのソート順をカテゴリごとに設定
+    if not sort_key:
+        if active_category == 'プランナー': sort_key = 'upload_date_desc'
+        elif active_category == 'デザイナー': sort_key = 'created_at_desc'
+        else: sort_key = 'due_date_asc'
 
-        if category == 'プランナー':
-            for task in tasks_by_category[category]:
-                latest_file = UploadedFile.query.filter_by(task_id=task.id).order_by(desc(UploadedFile.uploaded_at)).first()
-                task.latest_upload_date = latest_file.uploaded_at if latest_file else None
+    # 選択されたカテゴリのタスクのみをクエリ
+    query = TaskItem.query.filter_by(category=active_category)
 
-    return render_template('index.html', tasks=tasks_by_category, task_statuses=TASK_STATUSES, task_categories=TASK_CATEGORIES, sort_orders=sort_orders)
+    # ソート処理
+    if active_category == 'プランナー':
+        query = query.join(TaskItem.files, isouter=True).group_by(TaskItem.id)
+        if sort_key == 'upload_date_desc': query = query.order_by(desc(db.func.max(UploadedFile.uploaded_at)))
+        elif sort_key == 'upload_date_asc': query = query.order_by(asc(db.func.max(UploadedFile.uploaded_at)))
+        elif sort_key == 'title_asc': query = query.order_by(asc(TaskItem.title))
+    elif active_category == 'デザイナー':
+        if sort_key == 'created_at_desc': query = query.order_by(desc(TaskItem.created_at))
+        elif sort_key == 'created_at_asc': query = query.order_by(asc(TaskItem.created_at))
+        elif sort_key == 'title_asc': query = query.order_by(asc(TaskItem.title))
+    elif active_category == 'プログラマー':
+        if sort_key == 'due_date_asc': query = query.order_by(TaskItem.due_date.asc().nulls_last())
+        elif sort_key == 'due_date_desc': query = query.order_by(TaskItem.due_date.desc().nulls_first())
+        elif sort_key == 'status_asc': query = query.order_by(asc(TaskItem.status))
+    
+    tasks = query.all()
 
+    # プランナーの場合、最新アップロード日を計算してタスクに追加
+    if active_category == 'プランナー':
+        for task in tasks:
+            latest_file = UploadedFile.query.filter_by(task_id=task.id).order_by(desc(UploadedFile.uploaded_at)).first()
+            task.latest_upload_date = latest_file.uploaded_at if latest_file else None
+
+    return render_template('index.html', 
+                           tasks=tasks, 
+                           task_statuses=TASK_STATUSES, 
+                           task_categories=TASK_CATEGORIES, 
+                           active_category=active_category,
+                           sort_key=sort_key)
+
+# redirect先を修正して、操作後も同じタブが表示されるようにする
 @app.route('/add', methods=['POST'])
 def add_task():
-    title = request.form.get('title')
-    description = request.form.get('description')
-    category = request.form.get('category')
-    due_date_str = request.form.get('due_date')
-
+    # ... (この関数の中身は変更ありません)
+    title = request.form.get('title'); description = request.form.get('description'); category = request.form.get('category'); due_date_str = request.form.get('due_date')
     if title and category in TASK_CATEGORIES:
         due_date = datetime.strptime(due_date_str, '%Y-%m-%d').date() if due_date_str else None
         new_task = TaskItem(title=title, description=description, category=category, due_date=due_date)
-        db.session.add(new_task)
-        db.session.commit()
-    return redirect(url_for('home', **request.args))
+        db.session.add(new_task); db.session.commit()
+    return redirect(url_for('home', category=category)) # 追加したタスクのカテゴリタブにリダイレクト
 
 @app.route('/upload/<int:task_id>', methods=['POST'])
 def upload_file(task_id):
+    # ... (この関数の中身は変更ありません)
     task = TaskItem.query.get_or_404(task_id)
-    if 'file' not in request.files:
-        flash('ファイルが選択されていません')
-        return redirect(url_for('home', **request.args))
-    
+    if 'file' not in request.files: flash('ファイルが選択されていません'); return redirect(url_for('home', **request.args))
     file = request.files['file']
-    if file.filename == '':
-        flash('ファイル名がありません')
-        return redirect(url_for('home', **request.args))
-
+    if file.filename == '': flash('ファイル名がありません'); return redirect(url_for('home', **request.args))
     if file and allowed_file(file.filename, task.category):
-        filename = secure_filename(file.filename)
-        unique_filename = f"{int(datetime.now().timestamp())}_{filename}"
+        filename = secure_filename(file.filename); unique_filename = f"{int(datetime.now().timestamp())}_{filename}"
         file.save(os.path.join(app.config['UPLOAD_FOLDER'], unique_filename))
-        
-        new_file = UploadedFile(filename=unique_filename, task_id=task.id)
-        db.session.add(new_file)
-        db.session.commit()
-    else:
-        flash('許可されていないファイル形式です')
+        new_file = UploadedFile(filename=unique_filename, task_id=task.id); db.session.add(new_file); db.session.commit()
+    else: flash('許可されていないファイル形式です')
     return redirect(url_for('home', **request.args))
-
-@app.route('/uploads/<filename>')
-def uploaded_file(filename):
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 @app.route('/delete/<int:task_id>', methods=['POST'])
 def delete_task(task_id):
+    # ... (この関数の中身は変更ありません)
     task = TaskItem.query.get_or_404(task_id)
     for file in task.files:
         filepath = os.path.join(app.config['UPLOAD_FOLDER'], file.filename)
-        if os.path.exists(filepath):
-            os.remove(filepath)
-    db.session.delete(task)
-    db.session.commit()
+        if os.path.exists(filepath): os.remove(filepath)
+    db.session.delete(task); db.session.commit()
     return redirect(url_for('home', **request.args))
 
 @app.route('/update/status/<int:task_id>', methods=['POST'])
 def update_status(task_id):
+    # ... (この関数の中身は変更ありません)
     task = TaskItem.query.get_or_404(task_id)
     new_status = request.form.get('status')
-    if new_status in TASK_STATUSES:
-        task.status = new_status
-        db.session.commit()
+    if new_status in TASK_STATUSES: task.status = new_status; db.session.commit()
     return redirect(url_for('home', **request.args))
 
-# --- カスタムコマンド ---
+# (uploaded_file, db-init, 実行ブロックは変更なし)
+@app.route('/uploads/<filename>')
+def uploaded_file(filename):
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
 @app.cli.command('db-init')
 def db_init():
-    with app.app_context():
-        db.create_all()
+    with app.app_context(): db.create_all()
     print("データベースの初期化が完了しました。")
 
-# --- 実行ブロック ---
 if __name__ == '__main__':
     app.run(debug=True)
