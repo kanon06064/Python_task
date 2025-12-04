@@ -25,7 +25,8 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db = SQLAlchemy(app)
 
 # --- 選択肢の定義 ---
-TASK_STATUSES = ['ToDo', 'InProgress', 'Review', 'Done']
+TASK_STATUSES = ['未着手', '作業中', '確認待ち', '完了']
+TASK_PRIORITIES = ['高', '中', '低']
 TASK_CATEGORIES = ['プランナー', 'デザイナー', 'プログラマー']
 
 # --- モデル定義 ---
@@ -40,10 +41,11 @@ class TaskItem(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(200), nullable=False)
     description = db.Column(db.Text, nullable=True)
-    status = db.Column(db.String(50), nullable=False, default='ToDo')
+    status = db.Column(db.String(50), nullable=False, default='未着手')
     created_at = db.Column(db.DateTime, nullable=False, default=db.func.now())
     due_date = db.Column(db.Date, nullable=True)
     category = db.Column(db.String(50), nullable=False, default='プログラマー')
+    priority = db.Column(db.String(10), nullable=False, default='中')
     assignee_id = db.Column(db.Integer, db.ForeignKey('assignees.id'), nullable=True)
     assignee = db.relationship('Assignee', backref='tasks')
     files = db.relationship('UploadedFile', backref='task', lazy=True, cascade="all, delete-orphan")
@@ -75,14 +77,11 @@ def utility_processor():
 def home():
     active_category = request.args.get('category', 'プランナー')
     sort_key = request.args.get('sort')
-
     if not sort_key:
         if active_category == 'プランナー': sort_key = 'upload_date_desc'
         elif active_category == 'デザイナー': sort_key = 'created_at_desc'
         else: sort_key = 'due_date_asc'
-
     query = TaskItem.query.filter_by(category=active_category)
-
     if active_category == 'プランナー':
         query = query.join(TaskItem.files, isouter=True).group_by(TaskItem.id)
         if sort_key == 'upload_date_desc': query = query.order_by(desc(db.func.max(UploadedFile.uploaded_at)))
@@ -96,23 +95,13 @@ def home():
         if sort_key == 'due_date_asc': query = query.order_by(TaskItem.due_date.asc().nulls_last())
         elif sort_key == 'due_date_desc': query = query.order_by(TaskItem.due_date.desc().nulls_first())
         elif sort_key == 'status_asc': query = query.order_by(asc(TaskItem.status))
-    
     tasks = query.all()
-
     if active_category == 'プランナー':
         for task in tasks:
             latest_file = UploadedFile.query.filter_by(task_id=task.id).order_by(desc(UploadedFile.uploaded_at)).first()
             task.latest_upload_date = latest_file.uploaded_at if latest_file else None
-    
     assignees = Assignee.query.order_by(Assignee.name).all()
-
-    return render_template('index.html', 
-                           tasks=tasks, 
-                           task_statuses=TASK_STATUSES, 
-                           task_categories=TASK_CATEGORIES, 
-                           assignees=assignees,
-                           active_category=active_category,
-                           sort_key=sort_key)
+    return render_template('index.html', tasks=tasks, task_statuses=TASK_STATUSES, task_priorities=TASK_PRIORITIES, task_categories=TASK_CATEGORIES, assignees=assignees, active_category=active_category, sort_key=sort_key)
 
 @app.route('/add', methods=['POST'])
 def add_task():
@@ -120,12 +109,10 @@ def add_task():
     description = request.form.get('description')
     category = request.form.get('category')
     due_date_str = request.form.get('due_date')
-    
+    priority = request.form.get('priority')
     assignee_id = request.form.get('assignee_id')
     new_assignee_name = request.form.get('new_assignee_name', '').strip()
-    
     final_assignee_id = None
-
     if title and category in TASK_CATEGORIES:
         if assignee_id and assignee_id != 'new':
             final_assignee_id = int(assignee_id)
@@ -138,17 +125,12 @@ def add_task():
                 db.session.add(new_assignee)
                 db.session.commit()
                 final_assignee_id = new_assignee.id
-
         due_date = datetime.strptime(due_date_str, '%Y-%m-%d').date() if due_date_str else None
-        new_task = TaskItem(title=title, description=description, category=category, 
-                            due_date=due_date, assignee_id=final_assignee_id)
-        
+        new_task = TaskItem(title=title, description=description, category=category, due_date=due_date, priority=priority, assignee_id=final_assignee_id)
         db.session.add(new_task)
         db.session.commit()
-    
-    # ▼▼▼ ここが修正されたリダイレクト部分です ▼▼▼
     args = request.args.copy()
-    args.pop('category', None) # 重複を避けるためにcategoryを削除
+    args.pop('category', None)
     return redirect(url_for('home', category=category, **args))
 
 @app.route('/upload/<int:task_id>', methods=['POST'])
@@ -157,17 +139,14 @@ def upload_file(task_id):
     if 'file' not in request.files:
         flash('ファイルが選択されていません')
         return redirect(url_for('home', **request.args))
-    
     file = request.files['file']
     if file.filename == '':
         flash('ファイル名がありません')
         return redirect(url_for('home', **request.args))
-
     if file and allowed_file(file.filename, task.category):
         filename = secure_filename(file.filename)
         unique_filename = f"{int(datetime.now().timestamp())}_{filename}"
         file.save(os.path.join(app.config['UPLOAD_FOLDER'], unique_filename))
-        
         new_file = UploadedFile(filename=unique_filename, task_id=task.id)
         db.session.add(new_file)
         db.session.commit()
@@ -196,6 +175,15 @@ def update_status(task_id):
     new_status = request.form.get('status')
     if new_status in TASK_STATUSES:
         task.status = new_status
+        db.session.commit()
+    return redirect(url_for('home', **request.args))
+
+@app.route('/update/priority/<int:task_id>', methods=['POST'])
+def update_priority(task_id):
+    task = TaskItem.query.get_or_404(task_id)
+    new_priority = request.form.get('priority')
+    if new_priority in TASK_PRIORITIES:
+        task.priority = new_priority
         db.session.commit()
     return redirect(url_for('home', **request.args))
 
