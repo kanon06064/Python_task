@@ -1,4 +1,5 @@
 import os
+import requests
 from flask import Flask, render_template, request, redirect, url_for, send_from_directory, flash
 from flask_sqlalchemy import SQLAlchemy
 from dotenv import load_dotenv
@@ -18,6 +19,7 @@ ALLOWED_EXTENSIONS_DESIGNER.update(ALLOWED_EXTENSIONS_VIDEO)
 ALLOWED_EXTENSIONS_PROGRAMMER = ALLOWED_EXTENSIONS_VIDEO.copy()
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['SECRET_KEY'] = 'your_secret_key'
+DISCORD_WEBHOOK_URL = os.environ.get('DISCORD_WEBHOOK_URL')# .envからDiscordのURLを読み込む
 db_url = os.environ.get('DATABASE_URL')
 if not db_url: raise ValueError("DATABASE_URLが.envファイルに設定されていません。")
 app.config['SQLALCHEMY_DATABASE_URI'] = db_url
@@ -71,6 +73,18 @@ def is_video_file(filename):
 @app.context_processor
 def utility_processor():
     return dict(is_video_file=is_video_file)
+
+def send_discord_notification(embed_data):
+    """DiscordにEmbed形式で通知メッセージを送信します。"""
+    if not DISCORD_WEBHOOK_URL:
+        print("Discord Webhook URLが設定されていません。")
+        return
+
+    payload = {"embeds": [embed_data]}
+    try:
+        requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=5)
+    except requests.exceptions.RequestException as e:
+        print(f"Discordへの通知に失敗しました: {e}")
 
 # --- ルート（URL）とビュー関数 ---
 @app.route('/')
@@ -129,6 +143,19 @@ def add_task():
         new_task = TaskItem(title=title, description=description, category=category, due_date=due_date, priority=priority, assignee_id=final_assignee_id)
         db.session.add(new_task)
         db.session.commit()
+
+        assignee_name = new_task.assignee.name if new_task.assignee else '未割り当て'
+        embed = {
+            "title": "📝 新しいタスクが追加されました",
+            "color": 3447003, # 青色
+            "fields": [
+                {"name": "タスク", "value": new_task.title, "inline": False},
+                {"name": "カテゴリ", "value": new_task.category, "inline": True},
+                {"name": "担当者", "value": assignee_name, "inline": True},
+            ]
+        }
+        send_discord_notification(embed)
+
     args = request.args.copy()
     args.pop('category', None)
     return redirect(url_for('home', category=category, **args))
@@ -150,6 +177,18 @@ def upload_file(task_id):
         new_file = UploadedFile(filename=unique_filename, task_id=task.id)
         db.session.add(new_file)
         db.session.commit()
+
+        assignee_name = task.assignee.name if task.assignee else '未割り当て'
+        embed = {
+            "title": "📎 ファイルがアップロードされました",
+            "color": 15105570, # 黄色
+            "fields": [
+                {"name": "タスク", "value": task.title, "inline": False},
+                {"name": "ファイル名", "value": secure_filename(file.filename), "inline": False},
+                {"name": "担当者", "value": assignee_name, "inline": True},
+            ]
+        }
+        send_discord_notification(embed)
     else:
         flash('許可されていないファイル形式です')
     return redirect(url_for('home', **request.args))
@@ -172,25 +211,52 @@ def delete_task(task_id):
 @app.route('/update/status/<int:task_id>', methods=['POST'])
 def update_status(task_id):
     task = TaskItem.query.get_or_404(task_id)
+    old_status = task.status
     new_status = request.form.get('status')
-    if new_status in TASK_STATUSES:
+    if new_status in TASK_STATUSES and old_status != new_status:
         task.status = new_status
         db.session.commit()
+
+        assignee_name = task.assignee.name if task.assignee else '未割り当て'
+        embed = {
+            "title": "🔄 進行度が更新されました",
+            "color": 3066993, # 緑色
+            "fields": [
+                {"name": "タスク", "value": task.title, "inline": False},
+                {"name": "変更", "value": f"`{old_status}` → `{new_status}`", "inline": False},
+                {"name": "担当者", "value": assignee_name, "inline": True},
+            ]
+        }
+        send_discord_notification(embed)
     return redirect(url_for('home', **request.args))
 
 @app.route('/update/priority/<int:task_id>', methods=['POST'])
 def update_priority(task_id):
     task = TaskItem.query.get_or_404(task_id)
+    old_priority = task.priority
     new_priority = request.form.get('priority')
-    if new_priority in TASK_PRIORITIES:
+    if new_priority in TASK_PRIORITIES and old_priority != new_priority:
         task.priority = new_priority
         db.session.commit()
+        
+        assignee_name = task.assignee.name if task.assignee else '未割り当て'
+        color = 15158332 if new_priority == '高' else (16705372 if new_priority == '中' else 10197915) # 高=赤, 中=オレンジ, 低=灰色
+        embed = {
+            "title": "🔼 優先度が更新されました",
+            "color": color,
+            "fields": [
+                {"name": "タスク", "value": task.title, "inline": False},
+                {"name": "変更", "value": f"`{old_priority}` → `{new_priority}`", "inline": False},
+                {"name": "担当者", "value": assignee_name, "inline": True},
+            ]
+        }
+        send_discord_notification(embed)
     return redirect(url_for('home', **request.args))
 
 # --- カスタムコマンド ---
 @app.cli.command('db-init')
 def db_init():
-    with app.app_context():
+    with app.app.app_context():
         db.create_all()
     print("データベースの初期化が完了しました。")
 
